@@ -8,6 +8,7 @@ const { setSession, isValidSession, clearSession } = require('./sessions');
 const app = express();
 const JWT_SECRET = process.env.JWT_SECRET || 'change-this-in-railway-env';
 const ADMIN_KEY = process.env.ADMIN_KEY || 'change-this-admin-key-in-railway-env';
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'Crumpet';
 
 app.use(cors());
 app.use(express.json());
@@ -59,7 +60,7 @@ app.post('/login', (req, res) => {
 });
 
 app.post('/verify', requireAuth, (req, res) => {
-  res.json({ success: true, username: req.user.username });
+  res.json({ success: true, username: req.user.username, isAdmin: req.user.username === ADMIN_USERNAME });
 });
 
 app.post('/logout', requireAuth, (req, res) => {
