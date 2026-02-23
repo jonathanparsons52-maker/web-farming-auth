@@ -20,7 +20,7 @@ function requireAuth(req, res, next) {
   if (!token) return res.status(401).json({ success: false, message: 'Authentication required' });
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    if (!isValidSession(decoded.username, decoded.sessionId)) {
+    if (decoded.type !== 'agent' && !isValidSession(decoded.username, decoded.sessionId)) {
       return res.status(401).json({ success: false, message: 'Session expired — logged in elsewhere' });
     }
     req.user = decoded;
@@ -58,6 +58,20 @@ app.post('/login', async (req, res) => {
 
 app.post('/verify', requireAuth, (req, res) => {
   res.json({ success: true, username: req.user.username, isAdmin: req.user.username === ADMIN_USERNAME });
+});
+
+app.post('/login/agent', async (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) return res.status(400).json({ success: false, message: 'Username and password required' });
+  try {
+    const user = await findByUsername(username);
+    if (!user || !user.active) return res.status(401).json({ success: false, message: 'Invalid credentials' });
+    if (!validatePassword(user, password)) return res.status(401).json({ success: false, message: 'Invalid credentials' });
+    const token = jwt.sign({ username: user.username, type: 'agent' }, JWT_SECRET, { expiresIn: '365d' });
+    res.json({ success: true, token, username: user.username });
+  } catch (e) {
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
 });
 
 app.post('/logout', requireAuth, (req, res) => {
