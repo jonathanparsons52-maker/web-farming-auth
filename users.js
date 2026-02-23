@@ -1,79 +1,81 @@
-const fs = require('fs');
-const path = require('path');
+const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 
-const USERS_FILE = path.join(__dirname, 'users.json');
+const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
-function loadUsers() {
-  if (!fs.existsSync(USERS_FILE)) {
-    fs.writeFileSync(USERS_FILE, JSON.stringify([], null, 2));
-  }
-  return JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'));
+async function initDB() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      username TEXT PRIMARY KEY,
+      password TEXT NOT NULL,
+      active BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      settings JSONB DEFAULT '{}',
+      proxies JSONB DEFAULT '[]',
+      karma JSONB DEFAULT '[]',
+      imported JSONB DEFAULT '[]'
+    )
+  `);
 }
 
-function saveUsers(users) {
-  fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
+async function loadUsers() {
+  const { rows } = await pool.query('SELECT * FROM users');
+  return rows.map(r => ({
+    username: r.username,
+    password: r.password,
+    active: r.active,
+    createdAt: r.created_at,
+    settings: r.settings || {},
+    proxies: r.proxies || [],
+    karma: r.karma || [],
+    imported: r.imported || []
+  }));
 }
 
-function findByUsername(username) {
-  return loadUsers().find(u => u.username === username);
+async function findByUsername(username) {
+  const { rows } = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
+  if (!rows[0]) return null;
+  const r = rows[0];
+  return { username: r.username, password: r.password, active: r.active, createdAt: r.created_at, settings: r.settings, proxies: r.proxies, karma: r.karma, imported: r.imported };
 }
 
-function createUser(username, password) {
-  const users = loadUsers();
-  if (users.find(u => u.username === username)) throw new Error('User already exists');
+async function createUser(username, password) {
+  const existing = await findByUsername(username);
+  if (existing) throw new Error('User already exists');
   const hash = bcrypt.hashSync(password, 12);
-  const user = { username, password: hash, createdAt: new Date().toISOString(), active: true };
-  users.push(user);
-  saveUsers(users);
-  return user;
+  await pool.query('INSERT INTO users (username, password) VALUES ($1, $2)', [username, hash]);
 }
 
-function deleteUser(username) {
-  const users = loadUsers();
-  const filtered = users.filter(u => u.username !== username);
-  if (filtered.length === users.length) throw new Error('User not found');
-  saveUsers(filtered);
+async function deleteUser(username) {
+  const { rowCount } = await pool.query('DELETE FROM users WHERE username = $1', [username]);
+  if (rowCount === 0) throw new Error('User not found');
 }
 
-function setActive(username, active) {
-  const users = loadUsers();
-  const user = users.find(u => u.username === username);
-  if (!user) throw new Error('User not found');
-  user.active = active;
-  saveUsers(users);
+async function setActive(username, active) {
+  const { rowCount } = await pool.query('UPDATE users SET active = $1 WHERE username = $2', [active, username]);
+  if (rowCount === 0) throw new Error('User not found');
 }
 
 function validatePassword(user, password) {
   return bcrypt.compareSync(password, user.password);
 }
 
-function getUserSettings(username) {
-  const users = loadUsers();
-  const user = users.find(u => u.username === username);
-  return user?.settings || null;
+async function getUserSettings(username) {
+  const { rows } = await pool.query('SELECT settings FROM users WHERE username = $1', [username]);
+  return rows[0]?.settings || {};
 }
 
-function saveUserSettings(username, settings) {
-  const users = loadUsers();
-  const user = users.find(u => u.username === username);
-  if (!user) throw new Error('User not found');
-  user.settings = settings;
-  saveUsers(users);
+async function saveUserSettings(username, settings) {
+  await pool.query('UPDATE users SET settings = $1 WHERE username = $2', [JSON.stringify(settings), username]);
 }
 
-function getUserData(username, type) {
-  const users = loadUsers();
-  const user = users.find(u => u.username === username);
-  return user?.[type] || null;
+async function getUserData(username, type) {
+  const { rows } = await pool.query(`SELECT ${type} FROM users WHERE username = $1`, [username]);
+  return rows[0]?.[type] || [];
 }
 
-function saveUserData(username, type, data) {
-  const users = loadUsers();
-  const user = users.find(u => u.username === username);
-  if (!user) throw new Error('User not found');
-  user[type] = data;
-  saveUsers(users);
+async function saveUserData(username, type, data) {
+  await pool.query(`UPDATE users SET ${type} = $1 WHERE username = $2`, [JSON.stringify(data), username]);
 }
 
-module.exports = { findByUsername, createUser, deleteUser, setActive, validatePassword, loadUsers, getUserSettings, saveUserSettings, getUserData, saveUserData };
+module.exports = { initDB, findByUsername, createUser, deleteUser, setActive, validatePassword, loadUsers, getUserSettings, saveUserSettings, getUserData, saveUserData };

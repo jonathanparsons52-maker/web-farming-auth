@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
-const { findByUsername, validatePassword, loadUsers, createUser, deleteUser, setActive, getUserSettings, saveUserSettings, getUserData, saveUserData } = require('./users');
+const { initDB, findByUsername, validatePassword, loadUsers, createUser, deleteUser, setActive, getUserSettings, saveUserSettings, getUserData, saveUserData } = require('./users');
 const { setSession, isValidSession, clearSession } = require('./sessions');
 
 const app = express();
@@ -11,7 +11,7 @@ const ADMIN_KEY = process.env.ADMIN_KEY || 'change-this-admin-key-in-railway-env
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'Crumpet';
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
 function requireAuth(req, res, next) {
   const authHeader = req.headers['authorization'];
@@ -31,9 +31,7 @@ function requireAuth(req, res, next) {
 
 function requireAdminKey(req, res, next) {
   const key = req.headers['x-admin-key'];
-  if (!key || key !== ADMIN_KEY) {
-    return res.status(403).json({ success: false, message: 'Forbidden' });
-  }
+  if (!key || key !== ADMIN_KEY) return res.status(403).json({ success: false, message: 'Forbidden' });
   next();
 }
 
@@ -41,22 +39,20 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-app.post('/login', (req, res) => {
+app.post('/login', async (req, res) => {
   const { username, password } = req.body;
-  if (!username || !password) {
-    return res.status(400).json({ success: false, message: 'Username and password required' });
+  if (!username || !password) return res.status(400).json({ success: false, message: 'Username and password required' });
+  try {
+    const user = await findByUsername(username);
+    if (!user || !user.active) return res.status(401).json({ success: false, message: 'Invalid credentials' });
+    if (!validatePassword(user, password)) return res.status(401).json({ success: false, message: 'Invalid credentials' });
+    const sessionId = uuidv4();
+    setSession(user.username, sessionId);
+    const token = jwt.sign({ username: user.username, sessionId }, JWT_SECRET, { expiresIn: '24h' });
+    res.json({ success: true, token, username: user.username });
+  } catch (e) {
+    res.status(500).json({ success: false, message: 'Server error' });
   }
-  const user = findByUsername(username);
-  if (!user || !user.active) {
-    return res.status(401).json({ success: false, message: 'Invalid credentials' });
-  }
-  if (!validatePassword(user, password)) {
-    return res.status(401).json({ success: false, message: 'Invalid credentials' });
-  }
-  const sessionId = uuidv4();
-  setSession(user.username, sessionId);
-  const token = jwt.sign({ username: user.username, sessionId }, JWT_SECRET, { expiresIn: '24h' });
-  res.json({ success: true, token, username: user.username });
 });
 
 app.post('/verify', requireAuth, (req, res) => {
@@ -68,70 +64,80 @@ app.post('/logout', requireAuth, (req, res) => {
   res.json({ success: true });
 });
 
-app.get('/admin/users', requireAdminKey, (req, res) => {
-  const users = loadUsers().map(u => ({ username: u.username, active: u.active, createdAt: u.createdAt }));
-  res.json({ success: true, users });
+app.get('/admin/users', requireAdminKey, async (req, res) => {
+  try {
+    const users = await loadUsers();
+    res.json({ success: true, users: users.map(u => ({ username: u.username, active: u.active, createdAt: u.createdAt })) });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
 });
 
-app.post('/admin/users', requireAdminKey, (req, res) => {
+app.post('/admin/users', requireAdminKey, async (req, res) => {
   const { username, password } = req.body;
-  if (!username || !password) {
-    return res.status(400).json({ success: false, message: 'Username and password required' });
-  }
+  if (!username || !password) return res.status(400).json({ success: false, message: 'Username and password required' });
   try {
-    createUser(username, password);
+    await createUser(username, password);
     res.json({ success: true });
   } catch (e) {
     res.status(400).json({ success: false, message: e.message });
   }
 });
 
-app.delete('/admin/users/:username', requireAdminKey, (req, res) => {
+app.delete('/admin/users/:username', requireAdminKey, async (req, res) => {
   try {
-    deleteUser(req.params.username);
+    await deleteUser(req.params.username);
     res.json({ success: true });
   } catch (e) {
     res.status(404).json({ success: false, message: e.message });
   }
 });
 
-app.patch('/admin/users/:username', requireAdminKey, (req, res) => {
+app.patch('/admin/users/:username', requireAdminKey, async (req, res) => {
   try {
-    setActive(req.params.username, req.body.active);
+    await setActive(req.params.username, req.body.active);
     res.json({ success: true });
   } catch (e) {
     res.status(404).json({ success: false, message: e.message });
   }
 });
 
-app.get('/settings', requireAuth, (req, res) => {
-  const settings = getUserSettings(req.user.username);
-  res.json({ success: true, settings: settings || {} });
+app.get('/settings', requireAuth, async (req, res) => {
+  try {
+    const settings = await getUserSettings(req.user.username);
+    res.json({ success: true, settings: settings || {} });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
 });
 
-app.post('/settings', requireAuth, (req, res) => {
+app.post('/settings', requireAuth, async (req, res) => {
   try {
-    saveUserSettings(req.user.username, req.body);
+    await saveUserSettings(req.user.username, req.body);
     res.json({ success: true });
   } catch (e) {
     res.status(400).json({ success: false, message: e.message });
   }
 });
 
-app.get('/data/:type', requireAuth, (req, res) => {
-  const { type } = req.params;
-  const allowed = ['proxies', 'karma', 'imported'];
-  if (!allowed.includes(type)) return res.status(400).json({ success: false, message: 'Invalid type' });
-  const data = getUserData(req.user.username, type);
-  res.json({ success: true, data: data || [] });
-});
-
-app.post('/data/:type', requireAuth, (req, res) => {
+app.get('/data/:type', requireAuth, async (req, res) => {
   const { type } = req.params;
   const allowed = ['proxies', 'karma', 'imported'];
   if (!allowed.includes(type)) return res.status(400).json({ success: false, message: 'Invalid type' });
   try {
-    saveUserData(req.user.username, type, req.body);
+    const data = await getUserData(req.user.username, type);
+    res.json({ success: true, data: data || [] });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+app.post('/data/:type', requireAuth, async (req, res) => {
+  const { type } = req.params;
+  const allowed = ['proxies', 'karma', 'imported'];
+  if (!allowed.includes(type)) return res.status(400).json({ success: false, message: 'Invalid type' });
+  try {
+    await saveUserData(req.user.username, type, req.body);
     res.json({ success: true });
   } catch (e) {
     res.status(400).json({ success: false, message: e.message });
@@ -139,4 +145,10 @@ app.post('/data/:type', requireAuth, (req, res) => {
 });
 
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => console.log(`Auth server running on port ${PORT}`));
+
+initDB().then(() => {
+  app.listen(PORT, () => console.log(`Auth server running on port ${PORT}`));
+}).catch(err => {
+  console.error('Failed to init database:', err.message);
+  process.exit(1);
+});
