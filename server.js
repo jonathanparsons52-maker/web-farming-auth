@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
@@ -147,8 +148,10 @@ app.post('/data/:type', requireAuth, async (req, res) => {
 const PORT = process.env.PORT || 3001;
 
 initDB().then(() => {
-  app.listen(PORT, () => console.log(`Auth server running on port ${PORT}`));
+  console.log('Database initialized successfully');
+  app.listen(PORT, '0.0.0.0', () => console.log(`Auth server running on port ${PORT}`));
 }).catch(err => {
   console.error('Failed to init database:', err.message);
+  console.error('DATABASE_URL set:', !!process.env.DATABASE_URL);
   process.exit(1);
 });
