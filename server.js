@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
-const { findByUsername, validatePassword, loadUsers, createUser, deleteUser, setActive } = require('./users');
+const { findByUsername, validatePassword, loadUsers, createUser, deleteUser, setActive, getUserSettings, saveUserSettings } = require('./users');
 const { setSession, isValidSession, clearSession } = require('./sessions');
 
 const app = express();
@@ -101,6 +101,20 @@ app.patch('/admin/users/:username', requireAdminKey, (req, res) => {
     res.json({ success: true });
   } catch (e) {
     res.status(404).json({ success: false, message: e.message });
+  }
+});
+
+app.get('/settings', requireAuth, (req, res) => {
+  const settings = getUserSettings(req.user.username);
+  res.json({ success: true, settings: settings || {} });
+});
+
+app.post('/settings', requireAuth, (req, res) => {
+  try {
+    saveUserSettings(req.user.username, req.body);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(400).json({ success: false, message: e.message });
   }
 });
 

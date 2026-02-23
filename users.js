@@ -48,4 +48,18 @@ function validatePassword(user, password) {
   return bcrypt.compareSync(password, user.password);
 }
 
-module.exports = { findByUsername, createUser, deleteUser, setActive, validatePassword, loadUsers };
+function getUserSettings(username) {
+  const users = loadUsers();
+  const user = users.find(u => u.username === username);
+  return user?.settings || null;
+}
+
+function saveUserSettings(username, settings) {
+  const users = loadUsers();
+  const user = users.find(u => u.username === username);
+  if (!user) throw new Error('User not found');
+  user.settings = settings;
+  saveUsers(users);
+}
+
+module.exports = { findByUsername, createUser, deleteUser, setActive, validatePassword, loadUsers, getUserSettings, saveUserSettings };
