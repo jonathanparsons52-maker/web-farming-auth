@@ -62,4 +62,18 @@ function saveUserSettings(username, settings) {
   saveUsers(users);
 }
 
-module.exports = { findByUsername, createUser, deleteUser, setActive, validatePassword, loadUsers, getUserSettings, saveUserSettings };
+function getUserData(username, type) {
+  const users = loadUsers();
+  const user = users.find(u => u.username === username);
+  return user?.[type] || null;
+}
+
+function saveUserData(username, type, data) {
+  const users = loadUsers();
+  const user = users.find(u => u.username === username);
+  if (!user) throw new Error('User not found');
+  user[type] = data;
+  saveUsers(users);
+}
+
+module.exports = { findByUsername, createUser, deleteUser, setActive, validatePassword, loadUsers, getUserSettings, saveUserSettings, getUserData, saveUserData };

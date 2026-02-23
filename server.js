@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
-const { findByUsername, validatePassword, loadUsers, createUser, deleteUser, setActive, getUserSettings, saveUserSettings } = require('./users');
+const { findByUsername, validatePassword, loadUsers, createUser, deleteUser, setActive, getUserSettings, saveUserSettings, getUserData, saveUserData } = require('./users');
 const { setSession, isValidSession, clearSession } = require('./sessions');
 
 const app = express();
@@ -112,6 +112,26 @@ app.get('/settings', requireAuth, (req, res) => {
 app.post('/settings', requireAuth, (req, res) => {
   try {
     saveUserSettings(req.user.username, req.body);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(400).json({ success: false, message: e.message });
+  }
+});
+
+app.get('/data/:type', requireAuth, (req, res) => {
+  const { type } = req.params;
+  const allowed = ['proxies', 'karma', 'imported'];
+  if (!allowed.includes(type)) return res.status(400).json({ success: false, message: 'Invalid type' });
+  const data = getUserData(req.user.username, type);
+  res.json({ success: true, data: data || [] });
+});
+
+app.post('/data/:type', requireAuth, (req, res) => {
+  const { type } = req.params;
+  const allowed = ['proxies', 'karma', 'imported'];
+  if (!allowed.includes(type)) return res.status(400).json({ success: false, message: 'Invalid type' });
+  try {
+    saveUserData(req.user.username, type, req.body);
     res.json({ success: true });
   } catch (e) {
     res.status(400).json({ success: false, message: e.message });
