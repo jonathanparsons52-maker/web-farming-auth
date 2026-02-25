@@ -4,7 +4,7 @@ const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
 const { initDB, findByUsername, validatePassword, loadUsers, createUser, deleteUser, setActive, getUserSettings, saveUserSettings, getUserData, saveUserData } = require('./users');
-const { setSession, isValidSession, clearSession } = require('./sessions');
+const { initSessions, setSession, isValidSession, clearSession } = require('./sessions');
 
 const app = express();
 const JWT_SECRET = process.env.JWT_SECRET || 'change-this-in-railway-env';
@@ -14,13 +14,18 @@ const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'Crumpet';
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
-function requireAuth(req, res, next) {
+async function requireAuth(req, res, next) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
   if (!token) return res.status(401).json({ success: false, message: 'Authentication required' });
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    if (decoded.type !== 'agent' && !isValidSession(decoded.username, decoded.sessionId)) {
+    if (decoded.type === 'agent') {
+      req.user = decoded;
+      return next();
+    }
+    const valid = await isValidSession(decoded.username, decoded.sessionId);
+    if (!valid) {
       return res.status(401).json({ success: false, message: 'Session expired — logged in elsewhere' });
     }
     req.user = decoded;
@@ -48,7 +53,7 @@ app.post('/login', async (req, res) => {
     if (!user || !user.active) return res.status(401).json({ success: false, message: 'Invalid credentials' });
     if (!validatePassword(user, password)) return res.status(401).json({ success: false, message: 'Invalid credentials' });
     const sessionId = uuidv4();
-    setSession(user.username, sessionId);
+    await setSession(user.username, sessionId);
     const token = jwt.sign({ username: user.username, sessionId }, JWT_SECRET, { expiresIn: '24h' });
     res.json({ success: true, token, username: user.username });
   } catch (e) {
@@ -74,8 +79,8 @@ app.post('/login/agent', async (req, res) => {
   }
 });
 
-app.post('/logout', requireAuth, (req, res) => {
-  clearSession(req.user.username);
+app.post('/logout', requireAuth, async (req, res) => {
+  await clearSession(req.user.username);
   res.json({ success: true });
 });
 
@@ -161,7 +166,7 @@ app.post('/data/:type', requireAuth, async (req, res) => {
 
 const PORT = process.env.PORT || 3001;
 
-initDB().then(() => {
+Promise.all([initDB(), initSessions()]).then(() => {
   console.log('Database initialized successfully');
   app.listen(PORT, '0.0.0.0', () => console.log(`Auth server running on port ${PORT}`));
 }).catch(err => {
